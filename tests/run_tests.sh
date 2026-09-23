@@ -31,7 +31,6 @@ run_gsc() {
     [ -f "${1%.gs}.flags" ] && flags="$(cat "${1%.gs}.flags")"
     # shellcheck disable=SC2086
     (cd "$WORK" && "$GSC" "$1" --frontend="$2" $flags 2>&1) | grep -v '^\[gsc\]'
-    (cd "$WORK" && "$GSC" "$1" --frontend="$2" 2>&1) | grep -v '^\[gsc\]'
     return "${PIPESTATUS[0]}"
 }
 
