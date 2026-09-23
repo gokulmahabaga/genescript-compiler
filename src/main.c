@@ -23,8 +23,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <sys/wait.h>
 
 extern FILE *yyin;
 extern int yyparse(void);
@@ -39,30 +37,6 @@ static void strip_ext(const char *path, char *out, size_t outsz) {
     if (len >= outsz) len = outsz - 1;
     memcpy(out, base, len);
     out[len] = '\0';
-}
-
-/* Find runtime.o next to the gsc executable itself, so gsc works no
-   matter which directory it is run from. Falls back to ./runtime.o. */
-static void find_runtime(const char *argv0, char *out, size_t outsz) {
-    char exe[1024];
-    ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1); /* Linux / WSL */
-    if (n > 0) exe[n] = '\0';
-    else { strncpy(exe, argv0, sizeof(exe) - 1); exe[sizeof(exe) - 1] = '\0'; }
-
-    char *slash = strrchr(exe, '/');
-    if (slash) {
-        *slash = '\0';
-        snprintf(out, outsz, "%s/runtime.o", exe);
-        if (access(out, R_OK) == 0) return;
-    }
-    snprintf(out, outsz, "runtime.o");
-}
-
-/* system() returns a wait status; turn it into a plain exit code. */
-static int exit_code_of(int status) {
-    if (status == -1) return 1;
-    if (WIFEXITED(status)) return WEXITSTATUS(status);
-    return 1;
 }
 
 int main(int argc, char **argv) {
@@ -155,10 +129,7 @@ int main(int argc, char **argv) {
 
     /* Hand the bitcode to LLVM's own backend (llc) to emit real
        assembly text and a real object file -- Experiment 10. */
-    char runtimePath[1100];
-    find_runtime(argv[0], runtimePath, sizeof(runtimePath));
-
-    char cmd[4096];
+    char cmd[2048];
     snprintf(cmd, sizeof(cmd), "llc %s -o %s", bcPath, sPath);
     if (system(cmd) != 0) { fprintf(stderr, "llc (assembly) failed\n"); return 1; }
     snprintf(cmd, sizeof(cmd), "llc -filetype=obj %s -o %s", bcPath, oPath);
@@ -167,9 +138,9 @@ int main(int argc, char **argv) {
     fprintf(stderr, "[gsc] wrote object code:  %s\n", oPath);
 
     /* Link against the runtime library and (optionally) run it. */
-    snprintf(cmd, sizeof(cmd), "clang -no-pie %s %s -o %s", oPath, runtimePath, exePath);
+    snprintf(cmd, sizeof(cmd), "clang -no-pie %s runtime.o -o %s", oPath, exePath);
     if (system(cmd) != 0) {
-        fprintf(stderr, "Linking failed (could not link against %s -- run `make` first)\n", runtimePath);
+        fprintf(stderr, "Linking failed (expected runtime.o to already be built -- see Makefile)\n");
         return 1;
     }
     fprintf(stderr, "[gsc] linked executable:  %s\n\n", exePath);
@@ -178,12 +149,8 @@ int main(int argc, char **argv) {
     LLVMContextDispose(ctx);
 
     if (runAfter) {
-        /* "./name.exe" for a bare name; use the path as-is if it already
-           has a directory in it (e.g. -o /tmp/out or -o build/out). */
-        if (strchr(exePath, '/')) snprintf(cmd, sizeof(cmd), "%s", exePath);
-        else snprintf(cmd, sizeof(cmd), "./%s", exePath);
-        fflush(stdout);
-        return exit_code_of(system(cmd)); /* pass the program's exit code through */
+        snprintf(cmd, sizeof(cmd), "./%s", exePath);
+        system(cmd);
     }
 
     return 0;

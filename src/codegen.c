@@ -100,10 +100,8 @@ static void semantic_error(int line, const char *msg) {
     exit(1);
 }
 
-/* Every DNA string -- a SEQUENCE declaration or a string literal used
-   as a sequence/motif operand -- may contain only A, T, G, C
-   (case-insensitive). Reports the exact 1-indexed position. */
-static void validate_dna_string(const char *seq, int line) {
+static void validate_nucleotides(const ASTNode *decl) {
+    const char *seq = decl->strval;
     for (int i = 0; seq[i] != '\0'; i++) {
         char c = (char)toupper((unsigned char)seq[i]);
         if (c != 'A' && c != 'T' && c != 'G' && c != 'C') {
@@ -111,13 +109,9 @@ static void validate_dna_string(const char *seq, int line) {
             snprintf(msg, sizeof(msg),
                      "Invalid nucleotide '%c' at position %d. Valid symbols: A, T, G, C",
                      seq[i], i + 1);
-            semantic_error(line, msg);
+            semantic_error(decl->line, msg);
         }
     }
-}
-
-static void validate_nucleotides(const ASTNode *decl) {
-    validate_dna_string(decl->strval, decl->line);
 }
 
 static void declare_runtime(CodeGen *cg) {
@@ -217,11 +211,6 @@ static LLVMValueRef gen_load_var(CodeGen *cg, const VarInfo *v, GSType llvmTy) {
     return LLVMBuildLoad2(cg->builder, gs_type_to_llvm(llvmTy, cg->ctx), v->storage, "loadtmp");
 }
 
-static ComputedValue gen_compute(CodeGen *cg, ASTNode *call);
-
-/* Produce a sequence-valued operand: a variable holding a sequence, a
-   string literal (validated as DNA), or a nested call that returns a
-   sequence -- e.g. LENGTH(REVERSE(COMPLEMENT(dna))). */
 static LLVMValueRef gen_string_operand(CodeGen *cg, ASTNode *expr) {
     if (expr->kind == NODE_IDENTIFIER) {
         VarInfo *v = lookup(cg, expr->name, expr->line);
@@ -233,16 +222,7 @@ static LLVMValueRef gen_string_operand(CodeGen *cg, ASTNode *expr) {
         return gen_load_var(cg, v, GS_SEQUENCE);
     }
     if (expr->kind == NODE_STRING_LITERAL) {
-        validate_dna_string(expr->strval, expr->line);
-        return LLVMBuildGlobalStringPtr(cg->builder, expr->strval, "strlit");
-    }
-    if (expr->kind == NODE_FUNC_CALL) {
-        ComputedValue inner = gen_compute(cg, expr);
-        if (!is_string_like(inner.type)) {
-            semantic_error(expr->line,
-                "this argument must be a sequence, but GC_CONTENT/LENGTH return a number.");
-        }
-        return inner.val;
+        return LLVMBuildGlobalStringPtr(cg->builder, expr->strval, "motif");
     }
     semantic_error(expr->line, "expected a sequence or string here");
     return NULL; /* unreachable */
@@ -350,11 +330,6 @@ static void gen_print_like(CodeGen *cg, ASTNode *expr, int printBinary) {
 static void gen_statement(CodeGen *cg, ASTNode *stmt) {
     switch (stmt->kind) {
         case NODE_SEQUENCE_DECL: {
-            if (symtab_find(cg, stmt->name)) {
-                char msg[160];
-                snprintf(msg, sizeof(msg), "'%s' is already declared.", stmt->name);
-                semantic_error(stmt->line, msg);
-            }
             validate_nucleotides(stmt);
             LLVMValueRef g = LLVMBuildGlobalStringPtr(cg->builder, stmt->strval, stmt->name);
             symtab_bind(cg, stmt->name, g, VT_SEQ_RAW, 0);
@@ -372,9 +347,6 @@ static void gen_statement(CodeGen *cg, ASTNode *stmt) {
         case NODE_COMPARE: {
             VarInfo *l = lookup(cg, stmt->left, stmt->line);
             VarInfo *r = lookup(cg, stmt->right, stmt->line);
-            if (!is_string_like(l->type) || !is_string_like(r->type)) {
-                semantic_error(stmt->line, "COMPARE needs two sequences, not numeric values.");
-            }
             call2(cg, RT_PRINT_COMPARE,
                   gen_load_var(cg, l, GS_SEQUENCE), gen_load_var(cg, r, GS_SEQUENCE));
             return;

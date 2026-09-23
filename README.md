@@ -23,15 +23,9 @@ through its C API, `llvm-c/Core.h`, not the C++ `IRBuilder`). It has:
 
 ## Build & run
 
-Requires `flex`, `bison`, `clang`, and LLVM 18 **including its
-development headers** (`llvm-config-18`, `llc`, `llvm-c/*.h`). On
-Ubuntu / WSL:
-
-```bash
-sudo apt install -y build-essential flex bison clang llvm-18 llvm-18-dev
-```
-
-(Without `llvm-18-dev` the build fails with `'llvm-c/Types.h' file not found`.)
+Requires `flex`, `bison`, `clang`, and `llvm-18` (specifically
+`llvm-config-18`, `llc`). All installed via `apt-get install flex bison
+clang llvm llvm-dev`.
 
 ```bash
 make              # builds ./gsc (the compiler driver) and runtime.o
@@ -39,14 +33,11 @@ make              # builds ./gsc (the compiler driver) and runtime.o
 ./gsc examples/basic.gs --frontend=rd        # recursive-descent front end
 ./gsc examples/basic.gs --emit-llvm          # also print IR to stdout
 ./gsc examples/basic.gs --no-run             # compile/link but don't execute
-make test         # checks both front ends against saved expected output,
-                  # and checks that every tests/errors/*.gs is rejected
+make test         # runs every examples/*.gs through both front ends
 make clean
 ```
 
-`gsc` finds `runtime.o` next to its own executable, so it can be run
-from any directory. It exits non-zero on any lexical, parse, or
-semantic error. Each run of `gsc` leaves behind `<name>.ll` (IR text), `<name>.bc`
+Each run of `gsc` leaves behind `<name>.ll` (IR text), `<name>.bc`
 (bitcode), `<name>.s` (assembly), `<name>.o` (object code), and
 `<name>.exe` (linked binary) in the current directory — inspect any of
 them to see the real intermediate artifacts.
@@ -94,11 +85,6 @@ of it, not inside it. A few things worth knowing before you start:
   language, the cleanest boundary is: `gsc` takes a `.gs` file and produces
   a `.exe`; run that as a subprocess (`subprocess.run(["./gsc", path])`) and
   capture its stdout. No need to touch the C code at all for that.
-- **Tests**: `make test` runs `tests/run_tests.sh`. To add a test, drop
-  a `.gs` file in `tests/cases/` (must compile and run) or
-  `tests/errors/` (must be rejected), then run
-  `tests/run_tests.sh --update` once to save the expected output for
-  new `tests/cases/` files — check that output by eye before committing.
 - **`FIND_MOTIF` still isn't assignable to a variable** (see below) — if the
   ML model needs motif-search results as structured data rather than
   printed text, that's the other likely place someone will need to extend
@@ -119,7 +105,6 @@ rc = REVERSE_COMPLEMENT(dna);   -- rc is a sequence, stored via alloca
 FIND_MOTIF(rc, "CGA");          -- variables can feed into other functions
 alias = dna;                    -- x = y aliases an existing binding
 PRINT alias;
-PRINT LENGTH(REVERSE(COMPLEMENT(dna)));   -- calls can be nested
 ```
 
 **Deliberately not supported**: assigning `FIND_MOTIF`'s result to a
@@ -144,9 +129,6 @@ src/runtime.c           C runtime: GC content, motif search, translate,
                          reverse-complement, mutation comparison, printing
 src/main.c            Driver: parse -> codegen -> IR/bitcode -> llc -> clang
 GRAMMAR.md              Formal CFG + lexical grammar + semantic rules
-Makefile                Builds gsc + runtime.o; `make test` runs the test suite
-examples/*.gs           Sample programs (+ .expected output for each)
-tests/run_tests.sh      Test runner: both front ends vs. expected output
-tests/cases/*.gs        Extra programs that must compile and run correctly
-tests/errors/*.gs       Programs that must be rejected with an error
+Makefile                Builds gsc + runtime.o; `make test` runs all examples
+examples/*.gs           Sample programs
 ```

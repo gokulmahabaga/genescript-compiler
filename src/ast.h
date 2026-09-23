@@ -6,8 +6,8 @@
  * construction, and callers use isa()/cast() instead of dynamic_cast /
  * C++ RTTI. This header is valid C and C++ so it can be included
  * unmodified by the Bison grammar (parser.y, plain C actions), the
- * hand-written recursive-descent parser (rdparser.c), and the LLVM
- * IR codegen (codegen.c).
+ * hand-written recursive-descent parser (rdparser.cpp), and the LLVM
+ * IR codegen (codegen.cpp).
  *
  * Satisfies Lab Experiment 8: "Using LLVM-style RTTI for the AST".
  */

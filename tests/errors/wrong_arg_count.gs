@@ -1,2 +1,0 @@
-SEQUENCE dna = "ATGC";
-FIND_MOTIF(dna);

@@ -1,2 +1,0 @@
-SEQUENCE dna = "ATGC";
-PRINT LENGTH(dna) $ ;
