@@ -229,6 +229,9 @@ src/main.c            Driver: parse -> optimize -> codegen -> IR/bitcode -> llc 
 GRAMMAR.md              Formal CFG + lexical grammar + semantic rules
 Makefile                Builds gsc + runtime.o; `make test` runs the test suite
 examples/*.gs           Sample programs (+ .expected output for each)
+tests/run_tests.sh      Test runner: both front ends vs. expected output
+tests/cases/*.gs        Extra programs that must compile and run correctly
+                        (<name>.flags adds gsc options, e.g. --dump-tac)
 ui/app.py               Streamlit web UI (runs gsc, shows every phase)
 ui/requirements.txt     Python packages for the UI
 tests/run_tests.sh      Test runner: both front ends vs. expected output
