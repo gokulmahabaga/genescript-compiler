@@ -132,59 +132,6 @@ difference: `PRINT REVERSE(COMPLEMENT(dna));` is labelled
 "Reverse Complement:" instead of "Reverse:", because that is what it
 now computes.
 
-## Mapping to the 10 lab experiments
-
-| # | Experiment (from the syllabus) | Where it's satisfied |
-|---|---|---|
-| 1 | Implementation of LEXR using LLVM | `src/lexer.l` — Flex-generated scanner; tokens feed both front ends, which drive LLVM codegen |
-| 2 | Handwritten parser using LLVM | `src/rdparser.c` — hand-written top-down parser, calls the same `codegen_program()` |
-| 3 | Generating code with the LLVM backend | `src/main.c` — takes the `LLVMModuleRef` from codegen through bitcode → `llc` → object code → linked executable |
-| 4 | Defining a real programming language | `GRAMMAR.md` — full CFG + lexical grammar + static semantic rules |
-| 5 | Recursive descent parser for the CFG, implemented using LLVM | `src/rdparser.c` implements exactly the grammar in `GRAMMAR.md` and feeds LLVM codegen |
-| 6 | LR parser for the CFG, implemented using LLVM | `src/parser.y` — Bison LALR(1) grammar, same AST/codegen path |
-| 7 | Intro to Flex and Bison; the `"; b"` binary-output exercise | `src/lexer.l` + `src/parser.y`; the exercise itself is documented in `GRAMMAR.md` and demoed in `examples/binary_exercise.gs` |
-| 8 | LLVM-style RTTI for the AST; generating IR from the AST | `src/ast.h` (`NodeKind` tag + `ast_isa()`, the classic LLVM RTTI idiom) and `src/codegen.c` |
-| 9 | Converting AST types to LLVM types | `src/codegen.c::gs_type_to_llvm()` |
-| 10 | Emitting assembler text and object code | `src/main.c` — `llc <bc> -o .s` and `llc -filetype=obj <bc> -o .o` |
-
-## For teammates building on top of this
-
-This repo is **just the compiler** (the BCSE307P lab deliverable) — the
-group's ML classification and any Python/UI layer are meant to sit on top
-of it, not inside it. A few things worth knowing before you start:
-
-- **No `PREDICT`/`ANALYZE` keyword yet.** The Python interpreter version of
-  GeneScript (a separate part of this project, not in this repo) has a
-  placeholder GC-content-heuristic classifier wired in as `PREDICT(seq)`.
-  This LLVM compiler doesn't have that keyword at all yet — it only
-  supports `GC_CONTENT`, `LENGTH`, `FIND_MOTIF`, `REVERSE`, `COMPLEMENT`,
-  `REVERSE_COMPLEMENT`, `TRANSLATE`. If the ML model needs to be callable
-  from `.gs` source directly, that means: add a `PREDICT` token
-  (`src/lexer.l`), a grammar rule (`src/parser.y` + `src/rdparser.c`), a
-  `FUNC_PREDICT` case (`src/ast.h`, `src/codegen.c`), and a runtime function
-  it calls into (`src/runtime.c`) — follow the same pattern any of the
-  existing functions use, they're all one shape.
-- **Easiest ML integration point**: `src/runtime.c` is a plain C file that
-  gets linked into every compiled `.gs` program's executable. The
-  lowest-friction way to plug in a model is a C function there (or one that
-  calls out to a Python process / a C-exported model via a shared library)
-  — no LLVM/codegen knowledge required to add it, just the same
-  `PREDICT`-keyword plumbing above so the language can call it.
-- **Python integration**: if the "python part" means calling this compiler
-  from Python (e.g. a wrapper, a UI, or glue code) rather than extending the
-  language, the cleanest boundary is: `gsc` takes a `.gs` file and produces
-  a `.exe`; run that as a subprocess (`subprocess.run(["./gsc", path])`) and
-  capture its stdout. No need to touch the C code at all for that.
-- **Tests**: `make test` runs `tests/run_tests.sh`. To add a test, drop
-  a `.gs` file in `tests/cases/` (must compile and run) or
-  `tests/errors/` (must be rejected), then run
-  `tests/run_tests.sh --update` once to save the expected output for
-  new `tests/cases/` files — check that output by eye before committing.
-- **`FIND_MOTIF` still isn't assignable to a variable** (see below) — if the
-  ML model needs motif-search results as structured data rather than
-  printed text, that's the other likely place someone will need to extend
-  `codegen.c`.
-
 ## Scope note (read before extending)
 
 Variables are supported: `x = GC_CONTENT(dna);` allocates a real stack slot
@@ -234,10 +181,5 @@ tests/cases/*.gs        Extra programs that must compile and run correctly
                         (<name>.flags adds gsc options, e.g. --dump-tac)
 ui/app.py               Streamlit web UI (runs gsc, shows every phase)
 ui/requirements.txt     Python packages for the UI
-tests/run_tests.sh      Test runner: both front ends vs. expected output
-tests/cases/*.gs        Extra programs that must compile and run correctly
-                        (<name>.flags adds gsc options, e.g. --dump-tac)
-tests/run_tests.sh      Test runner: both front ends vs. expected output
-tests/cases/*.gs        Extra programs that must compile and run correctly
 tests/errors/*.gs       Programs that must be rejected with an error
 ```
