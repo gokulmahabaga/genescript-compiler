@@ -17,9 +17,19 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# Streamlit runs this script with only its own directory (ui/) on
+# sys.path -- not the repo root -- regardless of the directory `streamlit
+# run` is invoked from. That makes the sibling `ml` package unimportable
+# by default (ModuleNotFoundError: No module named 'ml'). Add the repo
+# root explicitly before importing it.
+REPO = Path(__file__).resolve().parent.parent
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 
 import pandas as pd
 import streamlit as st
@@ -27,7 +37,6 @@ from ml.features import extract_features
 from ml.predict import predict_sequence
 from ml.validation import DNAValidationError, validate_sequence
 
-REPO = Path(__file__).resolve().parent.parent
 GSC = REPO / "gsc"
 
 PHASES = ["Lexer", "Parser", "Semantic analysis", "Optimizer", "LLVM codegen", "Run"]
