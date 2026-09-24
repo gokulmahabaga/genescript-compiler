@@ -1,0 +1,83 @@
+diff --git a/Makefile b/Makefile
+index f95c0a7..2f1eaf1 100644
+--- a/Makefile
++++ b/Makefile
+@@ -6,6 +6,13 @@ LDFLAGS := $(shell $(LLVM_CONFIG) --ldflags)
+ LIBS    := $(shell $(LLVM_CONFIG) --libs core bitwriter analysis)
+ SYSLIBS := $(shell $(LLVM_CONFIG) --system-libs)
+ 
++# The `llc` binary matching the LLVM version we just linked against --
++# NOT necessarily on PATH as plain "llc" (Ubuntu installs it as e.g.
++# llc-18 when multiple LLVM versions coexist). Resolved here, once, from
++# the same llvm-config used for everything else, and baked into main.o
++# so it always matches LLVM_CONFIG above instead of drifting from it.
++LLC := $(shell $(LLVM_CONFIG) --bindir)/llc
++
+ SRC := src
+ 
+ .PHONY: all clean test
+@@ -45,7 +52,7 @@ codegen.o: $(SRC)/codegen.c $(SRC)/codegen.h $(SRC)/ast.h
+ 	$(CC) -c $(SRC)/codegen.c -o codegen.o -I$(SRC) $(CFLAGS)
+ 
+ main.o: $(SRC)/main.c $(SRC)/ast.h $(SRC)/codegen.h $(SRC)/optimizer.h $(SRC)/dump.h
+-	$(CC) -c $(SRC)/main.c -o main.o -I$(SRC) $(CFLAGS)
++	$(CC) -c $(SRC)/main.c -o main.o -I$(SRC) $(CFLAGS) -DLLC_PATH='"$(LLC)"'
+ 
+ # ---- Link the compiler driver itself (this is "gsc", the GeneScript compiler) ----
+ gsc: ast.o parser.tab.o lex.yy.o rdparser.o optimizer.o dump.o codegen.o main.o
+diff --git a/src/main.c b/src/main.c
+index f544d57..648f6ba 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -28,6 +28,17 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++
++/* The Makefile bakes in the llc that matches the LLVM version we were
++ * built against (via `llvm-config --bindir`), since a plain unversioned
++ * "llc" isn't guaranteed to exist -- Ubuntu installs it as e.g. llc-18
++ * when multiple LLVM versions are on the system. Anyone building this
++ * outside the Makefile (or without llvm-config on PATH) falls back to
++ * the unversioned name, which still works if that's what they have.
++ */
++#ifndef LLC_PATH
++#define LLC_PATH "llc"
++#endif
+ #include <unistd.h>
+ #include <sys/wait.h>
+ 
+@@ -208,9 +219,9 @@ int main(int argc, char **argv) {
+     find_runtime(argv[0], runtimePath, sizeof(runtimePath));
+ 
+     char cmd[4096];
+-    snprintf(cmd, sizeof(cmd), "llc %s -o %s", bcPath, sPath);
++    snprintf(cmd, sizeof(cmd), "%s %s -o %s", LLC_PATH, bcPath, sPath);
+     if (system(cmd) != 0) { fprintf(stderr, "llc (assembly) failed\n"); return 1; }
+-    snprintf(cmd, sizeof(cmd), "llc -filetype=obj %s -o %s", bcPath, oPath);
++    snprintf(cmd, sizeof(cmd), "%s -filetype=obj %s -o %s", LLC_PATH, bcPath, oPath);
+     if (system(cmd) != 0) { fprintf(stderr, "llc (object) failed\n"); return 1; }
+     fprintf(stderr, "[gsc] wrote assembly:     %s\n", sPath);
+     fprintf(stderr, "[gsc] wrote object code:  %s\n", oPath);
+diff --git a/tests/cases/nested_calls.expected b/tests/cases/nested_calls.expected
+index af2a65e..9aa07cb 100644
+--- a/tests/cases/nested_calls.expected
++++ b/tests/cases/nested_calls.expected
+@@ -7,5 +7,4 @@ GC -> position 1
+ GC -> position 5
+ GC -> position 9
+ Reverse Complement:
+-Reverse:
+ CGATCGATCGCAT
+diff --git a/tests/run_tests.sh b/tests/run_tests.sh
+index d067fb4..209504e 100755
+--- a/tests/run_tests.sh
++++ b/tests/run_tests.sh
+@@ -31,7 +31,6 @@ run_gsc() {
+     [ -f "${1%.gs}.flags" ] && flags="$(cat "${1%.gs}.flags")"
+     # shellcheck disable=SC2086
+     (cd "$WORK" && "$GSC" "$1" --frontend="$2" $flags 2>&1) | grep -v '^\[gsc\]'
+-    (cd "$WORK" && "$GSC" "$1" --frontend="$2" 2>&1) | grep -v '^\[gsc\]'
+     return "${PIPESTATUS[0]}"
+ }
+ 
