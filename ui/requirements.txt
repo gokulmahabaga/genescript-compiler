@@ -1,2 +1,4 @@
 streamlit>=1.46
 pandas
+scikit-learn
+joblib

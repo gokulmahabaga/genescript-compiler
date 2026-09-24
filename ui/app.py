@@ -23,6 +23,9 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from ml.features import extract_features
+from ml.predict import predict_sequence
+from ml.validation import DNAValidationError, validate_sequence
 
 REPO = Path(__file__).resolve().parent.parent
 GSC = REPO / "gsc"
@@ -212,6 +215,31 @@ st.markdown(
 
 st.title("🧬 GeneScript Compiler")
 st.caption("A DSL for DNA sequence analysis, compiled through Flex/Bison → AST → optimizer → LLVM → native code.")
+
+with st.expander("ML Classification: Promoter vs Non-Promoter", expanded=False):
+    st.caption("Classify a DNA sequence with the separately trained Random Forest model.")
+    ml_sequence = st.text_area("DNA sequence (A/C/G/T)", key="ml_sequence", height=110)
+    if st.button("Predict", key="ml_predict", type="secondary"):
+        try:
+            normalized = validate_sequence(ml_sequence)
+            features = extract_features(normalized)
+            prediction = predict_sequence(normalized)
+            st.session_state.ml_prediction = prediction
+            st.session_state.ml_sequence_info = (len(normalized), features[4])
+        except DNAValidationError as exc:
+            st.session_state.pop("ml_prediction", None)
+            st.error(str(exc))
+        except FileNotFoundError as exc:
+            st.error(str(exc))
+    if st.session_state.get("ml_prediction"):
+        prediction = st.session_state.ml_prediction
+        length, gc_content = st.session_state.ml_sequence_info
+        st.success(f"Predicted class: **{prediction['prediction']}**")
+        if prediction["confidence"] is not None:
+            st.metric("Model probability for predicted class", f"{prediction['confidence']:.1%}")
+        c_len, c_gc = st.columns(2)
+        c_len.metric("Sequence length", length)
+        c_gc.metric("GC content", f"{gc_content:.1%}")
 
 if not GSC.exists():
     st.error(f"Compiler not found at `{GSC}`. Run `make` in the repo root first, then reload this page.")
