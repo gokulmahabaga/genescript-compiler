@@ -1,6 +1,6 @@
 # GeneScript Compiler — LLVM / Flex / Bison edition
 
-Built specifically for whose indicative
+Built specifically for **BCSE307P (Compiler Design Lab)**, whose indicative
 experiments require an LLVM-, Flex-, and Bison-based toolchain rather than a
 hand-rolled interpreter. (There's also a pure-Python version of this same
 GeneScript DSL — same language, same group project — built for the
