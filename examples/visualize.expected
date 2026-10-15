@@ -1,0 +1,53 @@
+
+Length: 60
+GC Content: 46.67%
+Motif:
+ATG -> position 1
+ATG -> position 31
+Motif:
+GCGG -> position 13
+GCGG -> position 19
+GCGG -> position 33
+Motif:
+TTAA -> position 41
+TTAA -> position 48
+TTAA -> position 54
+Protein: MKLSAAAGPRMRPFKY
+Mutation Report
+
+Position     21
+Reference    G
+Sample       T
+Type         Substitution
+
+Position     49
+Reference    T
+Sample       C
+Type         Substitution
+
+Mutations: 2    Similarity: 96.7%
+Mutation Report
+
+Length mismatch: reference=60, sample=56
+
+Position     57
+Reference    A
+Sample       -
+Type         Deletion
+
+Position     58
+Reference    T
+Sample       -
+Type         Deletion
+
+Position     59
+Reference    A
+Sample       -
+Type         Deletion
+
+Position     60
+Reference    G
+Sample       -
+Type         Deletion
+
+Mutations: 4    Similarity: 93.3%
