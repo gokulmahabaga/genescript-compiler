@@ -8,11 +8,63 @@ The optional Python ML layer classifies a valid DNA string as `Promoter` or
 Training uses the included UCI Machine Learning Repository **Molecular Biology
 (Promoter Gene Sequences)** dataset (ID 67; DOI 10.24432/C5S01D; CC BY 4.0).
 It contains 106 *E. coli* records, with 53 `+` promoter and 53 `-`
-non-promoter labels. Each has 57 bases. The file is `ml/data/promoters.data`;
-its source and row format are described in `ml/data/README.md`. Records are
-checked for the expected label, A/C/G/T alphabet, and length. User sequences
-may be lowercase and are normalized to uppercase; empty or other alphabet
-inputs are rejected.
+non-promoter labels, each 57 bases. The file is `ml/data/promoters.data`
+(row format: `label,name,sequence`); its source is described in
+`ml/data/README.md`. Records are checked for the expected label, A/C/G/T
+alphabet, and a sane minimum length (`ml.dataset.MIN_SEQUENCE_LENGTH`, 10
+bases) -- the 57-base width is a property of this one source dataset, not a
+model requirement, so rows added later (see below) don't have to match it.
+User sequences may be lowercase and are normalized to uppercase; empty or
+other-alphabet inputs are rejected.
+
+## Adding more training data
+
+106 samples is a small dataset (see Limitations below) -- the direct way to
+improve on it is to add more labeled sequences, through `ml/add_data.py`
+rather than hand-editing `promoters.data`. It validates everything first
+(DNA alphabet, minimum length, duplicates) and reports exactly what was
+added vs. skipped and why; nothing is written if every row is invalid.
+
+Add one sequence:
+
+```bash
+python -m ml.add_data --label Promoter --sequence ACGTACGT... --name my_seq_1
+```
+
+Bulk import from a CSV (or TSV) with `label` and `sequence` columns --
+`name` is optional, and label accepts `Promoter`/`Non-Promoter`, `+`/`-`,
+or `P`/`N`, case-insensitively:
+
+```bash
+python -m ml.add_data --csv new_sequences.csv
+```
+
+Add `--retrain` to either form to retrain on the updated dataset immediately
+and print the new metrics -- useful for seeing right away whether the added
+rows actually helped:
+
+```bash
+python -m ml.add_data --csv new_sequences.csv --retrain
+```
+
+`--retrain` writes to `ml/models/promoter_classifier.joblib` by default --
+the same file the UI and `ml.predict` use. Pass `--model scratch.joblib`
+together with `--dataset scratch.data` when trying this out against a copy
+rather than the real dataset, so a test run can't overwrite the production
+model.
+
+A sequence that's byte-identical to one already in the dataset is skipped
+as a duplicate (pass `--allow-duplicates` to add it anyway). Rows are also
+usable directly from Python:
+
+```python
+from ml.add_data import add_sequences
+report = add_sequences([
+    {"label": "Promoter", "sequence": "ACGT...", "name": "sample_1"},
+    {"label": "-", "sequence": "TTGA..."},
+])
+print(report["added"], report["skipped"])
+```
 
 ## Features and model
 
