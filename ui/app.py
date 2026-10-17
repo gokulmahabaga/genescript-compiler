@@ -37,6 +37,8 @@ from ml.features import extract_features
 from ml.predict import predict_sequence
 from ml.validation import DNAValidationError, validate_sequence
 
+import dna_viz as viz
+
 GSC = REPO / "gsc"
 
 PHASES = ["Lexer", "Parser", "Semantic analysis", "Optimizer", "LLVM codegen", "Run"]
@@ -199,6 +201,90 @@ def count_calls(tac: str) -> int:
 
 
 # --------------------------------------------------------------------------
+# DNA Visualizer tab
+# --------------------------------------------------------------------------
+
+def render_visualizer(res: Result, tac: str) -> None:
+    seqs = viz.declared_sequences(symtab_table(res.sections.get("Symbol table", "")))
+    if not res.ok and not seqs:
+        st.caption("Nothing to visualize — compilation stopped at the step marked ✗ above.")
+        return
+    if not seqs:
+        st.caption("Declare a sequence (`SEQUENCE dna = \"ATGC...\";`) to see it here.")
+        return
+
+    motifs = viz.motif_results(tac, res.output) if res.ok else []
+    compares = viz.compare_results(tac, res.output) if res.ok else []
+
+    names = list(seqs)
+    name = names[0] if len(names) == 1 else st.selectbox("Sequence", names, key="viz_seq")
+    seq = seqs[name]
+    my_motifs = [m for m in motifs if m.sequence == name]
+
+    # ---- headline numbers ----
+    gc = viz.gc_percent(seq)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Length", f"{len(seq)} bases")
+    c2.metric("GC content", f"{gc:.2f}%")
+    c3.metric("AT content", f"{100 - gc:.2f}%")
+    c4.metric("Motif hits", sum(len(m.positions) for m in my_motifs) if my_motifs else "–",
+              help="Matches found by FIND_MOTIF calls on this sequence in your program.")
+
+    # ---- base composition ----
+    st.markdown("**Base composition** — how many of each base the sequence contains")
+    st.altair_chart(viz.composition_chart(seq), width="stretch")
+
+    # ---- sequence map with motif highlight ----
+    st.markdown("**Sequence map** — every base in order")
+    highlight = None
+    if my_motifs:
+        labels = ["(none)"] + [f"{m.motif}  ·  {len(m.positions)} hit{'s' if len(m.positions) != 1 else ''}"
+                               for m in my_motifs]
+        pick = st.radio("Highlight a motif from FIND_MOTIF", labels, horizontal=True, key=f"viz_motif_{name}")
+        if pick != "(none)":
+            highlight = my_motifs[labels.index(pick) - 1]
+            if not highlight.positions:
+                st.caption(f"`{highlight.motif}` was not found in {name}.")
+    st.altair_chart(viz.sequence_map(seq, highlight), width="stretch")
+
+    # ---- GC along the sequence ----
+    if len(seq) >= 6:
+        st.markdown("**GC content along the sequence** — a sliding window shows GC-rich and AT-rich regions")
+        max_w = max(3, min(50, len(seq) - 1))
+        window = st.slider("Window size (bases)", 3, max_w, min(max(3, len(seq) // 4), max_w), key=f"viz_win_{name}")
+        st.altair_chart(viz.gc_window_chart(seq, window), width="stretch")
+
+    # ---- codons ----
+    with st.expander("Codons and protein (what TRANSLATE reads)"):
+        cods = viz.codons(seq)
+        if cods:
+            st.markdown(viz.codon_html(seq), unsafe_allow_html=True)
+            protein = "".join(aa for _, aa in cods if aa != "*")
+            st.caption(f"Protein: **{protein or '(none)'}** — read 3 bases at a time, stopping at a stop codon.")
+        else:
+            st.caption("Too short to contain a codon.")
+
+    # ---- every sequence side by side ----
+    if len(seqs) > 1:
+        st.markdown("**GC content by sequence**")
+        st.altair_chart(viz.gc_by_sequence_chart(seqs), width="stretch")
+
+    # ---- mutations ----
+    for cmp in compares:
+        if cmp.reference in seqs and cmp.sample in seqs:
+            kinds = {}
+            for m in cmp.mutations:
+                kinds[m.kind] = kinds.get(m.kind, 0) + 1
+            summary = ", ".join(f"{v} {k.lower()}{'s' if v != 1 else ''}" for k, v in kinds.items()) or "no mutations"
+            st.markdown(f"**Mutations: {cmp.reference} vs {cmp.sample}** — {summary} · similarity "
+                        f"**{cmp.similarity:.1f}%** (▼ marks each mutated position)")
+            st.altair_chart(viz.mutation_chart(seqs[cmp.reference], seqs[cmp.sample], cmp), width="stretch")
+
+    with st.expander("Table view"):
+        st.dataframe(viz.composition(seq)[["Base", "Count", "Percent"]].round(2), hide_index=True)
+
+
+# --------------------------------------------------------------------------
 # Page
 # --------------------------------------------------------------------------
 
@@ -215,6 +301,13 @@ st.markdown(
       .step.fail { background:rgba(220,60,60,.18); border-color:rgba(220,60,60,.8); }
       .step.skip { opacity:.45; }
       .arrow { opacity:.5; }
+      .codons { display:flex; flex-wrap:wrap; gap:6px; margin:.25rem 0 1rem; }
+      .codon { border:1px solid rgba(128,128,128,.35); border-radius:6px; padding:4px 8px; text-align:center;
+               min-width:3.2rem; }
+      .codon .nt { font-family: ui-monospace, Menlo, Consolas, monospace; font-size:.85rem; color:#52514e; }
+      .codon .aa { font-weight:700; font-size:1.05rem; }
+      .codon.stop { border-style:dashed; }
+      .codon.stop .aa { font-size:.75rem; letter-spacing:.05em; color:#52514e; }
       .stTextArea textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
                              font-size: .9rem; line-height: 1.5; }
     </style>
@@ -335,7 +428,7 @@ with right:
         m3.metric("Domain rewrites", domain)
         m4.metric("Values reused (CSE)", reused)
 
-    tabs = st.tabs(["▶ Output", "Tokens", "AST", "Symbol table", "TAC & optimizer", "LLVM IR", "Assembly"])
+    tabs = st.tabs(["▶ Output", "🧬 DNA Visualizer", "Tokens", "AST", "Symbol table", "TAC & optimizer", "LLVM IR", "Assembly"])
 
     with tabs[0]:
         if res.output:
@@ -345,19 +438,23 @@ with right:
         else:
             st.caption("No output — compilation stopped at the step marked ✗ above.")
 
+
     with tabs[1]:
+        render_visualizer(res, tac_after)
+
+    with tabs[2]:
         if len(toks):
             st.dataframe(toks, hide_index=True, width="stretch")
         else:
             st.caption("No tokens (the lexer stopped at an error).")
 
-    with tabs[2]:
+    with tabs[3]:
         if "AST" in res.sections:
             st.code(res.sections["AST"], language=None)
         else:
             st.caption("No AST — parsing did not finish.")
 
-    with tabs[3]:
+    with tabs[4]:
         sym = symtab_table(res.sections.get("Symbol table", ""))
         if len(sym):
             st.dataframe(sym, hide_index=True, width="stretch")
@@ -365,7 +462,7 @@ with right:
         else:
             st.caption("No symbol table.")
 
-    with tabs[4]:
+    with tabs[5]:
         if not tac_before:
             st.caption("No intermediate code — compilation stopped earlier.")
         elif optimized:
@@ -386,13 +483,13 @@ with right:
             st.markdown(f"**Three-address code** · {n_before} instructions (optimizer off)")
             st.code(tac_before, language=None)
 
-    with tabs[5]:
+    with tabs[6]:
         if res.llvm_ir:
             st.code(res.llvm_ir, language="llvm")
         else:
             st.caption("No LLVM IR — compilation stopped earlier.")
 
-    with tabs[6]:
+    with tabs[7]:
         if res.assembly:
             st.code(res.assembly, language="asm")
         else:

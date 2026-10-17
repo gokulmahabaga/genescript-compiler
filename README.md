@@ -76,6 +76,26 @@ streamlit run ui/app.py                # then open http://localhost:8501
 `ui/app.py` only runs `gsc` with its `--dump-*` flags and lays out the
 result -- it doesn't reimplement any part of the compiler.
 
+**DNA Visualizer tab** (`ui/dna_viz.py`) -- charts of the program's
+sequences and results. Load `examples/visualize.gs` to see all of them:
+
+- stat tiles: length, GC%, AT%, motif hits
+- **base composition**: A/T/G/C counts
+- **sequence map**: every base as a colored cell; pick a motif found by
+  `FIND_MOTIF` and its hits light up
+- **GC content along the sequence**: sliding window (adjustable size) to
+  spot GC-rich and AT-rich regions
+- **codons and protein**: what `TRANSLATE` reads, codon by codon
+- **GC content by sequence** when the program declares several
+- **mutation view** for every `COMPARE`: reference and sample base by
+  base, mutated positions marked
+
+Sequences come from the symbol table, motif hits and mutations from the
+compiled program's own output (matched to the `FIND_MOTIF` / `COMPARE`
+instructions in the TAC). Base colors were checked for color-blind
+safety, and every chart also prints the base letters, so color is never
+the only cue. The UI uses the light theme (`.streamlit/config.toml`).
+
 ## Seeing every phase
 
 ```bash
@@ -176,6 +196,9 @@ src/main.c            Driver: parse -> optimize -> codegen -> IR/bitcode -> llc 
 GRAMMAR.md              Formal CFG + lexical grammar + semantic rules
 Makefile                Builds gsc + runtime.o; `make test` runs the test suite
 examples/*.gs           Sample programs (+ .expected output for each)
+ui/app.py               Streamlit web UI (runs gsc, shows every phase)
+ui/dna_viz.py           DNA Visualizer charts (Altair)
+ui/requirements.txt     Python packages for the UI
 tests/run_tests.sh      Test runner: both front ends vs. expected output
 tests/cases/*.gs        Extra programs that must compile and run correctly
                         (<name>.flags adds gsc options, e.g. --dump-tac)
