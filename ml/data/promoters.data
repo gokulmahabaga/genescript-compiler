@@ -104,8 +104,3 @@
 -,1226,		cgcgactacgatgagatgcctgagtgcttccgttactggattgtcaccaaggcttcc
 -, 794,		ctcgtcctcaatggcctctaaacgggtcttgaggggttttttgctgaaaggaggaac
 -,1442,		taacattaataaataaggaggctctaatggcactcattagccaatcaatcaagaact
-+,sample_1,TTGACAATTGACAATTGACAATTGACAA
--,sample_2,CCCGGGCCCGGGCCCGGGCCCGGGCCCG
-+,sample_3,AAATTTCCCGGGAAATTTCCCGGGAAAT
-+,seq1,ACGTACGTACGTACGTACGTACGT
--,seq2,TTTTGGGGCCCCAAAATTTTGGGG
