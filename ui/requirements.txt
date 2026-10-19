@@ -3,3 +3,4 @@ pandas
 altair>=5
 scikit-learn==1.7.2
 joblib
+numpy

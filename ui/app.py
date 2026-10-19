@@ -33,8 +33,12 @@ if str(REPO) not in sys.path:
 
 import pandas as pd
 import streamlit as st
+from ml.anomaly import check_sequence as check_anomaly
+from ml.cluster import classify_gc_band
+from ml.compare import compare_models
 from ml.features import extract_features
 from ml.predict import predict_sequence
+from ml.similarity import find_similar
 from ml.validation import DNAValidationError, validate_sequence
 
 import dna_viz as viz
@@ -342,6 +346,103 @@ with st.expander("ML Classification: Promoter vs Non-Promoter", expanded=False):
         c_len, c_gc = st.columns(2)
         c_len.metric("Sequence length", length)
         c_gc.metric("GC content", f"{gc_content:.1%}")
+
+    st.divider()
+    st.caption("The prediction above always uses the production model (Random Forest). "
+               "This compares it against three alternatives on the same held-out split.")
+    if st.button("Compare models", key="ml_compare"):
+        try:
+            with st.spinner("Training Random Forest, Logistic Regression, SVM, and KNN…"):
+                st.session_state.ml_comparison = compare_models()
+        except (FileNotFoundError, ValueError) as exc:
+            st.session_state.pop("ml_comparison", None)
+            st.error(str(exc))
+    if st.session_state.get("ml_comparison"):
+        rows = [
+            {
+                "Model": r["display_name"],
+                "Accuracy": r["accuracy"],
+                "Precision": r["precision"],
+                "Recall": r["recall"],
+                "F1": r["f1"],
+                "ROC-AUC": r.get("roc_auc"),
+            }
+            for r in st.session_state.ml_comparison
+        ]
+        df = pd.DataFrame(rows).sort_values("Accuracy", ascending=False).reset_index(drop=True)
+        st.dataframe(
+            df.style.format({c: "{:.1%}" for c in ("Accuracy", "Precision", "Recall", "F1", "ROC-AUC")}),
+            hide_index=True, width="stretch",
+        )
+        st.caption("Same 80/20 stratified split for all four models (random_state=42), so this is "
+                   "apples-to-apples. The non-tree models (Logistic Regression, SVM, KNN) are each "
+                   "run through a StandardScaler first — see ml/models.py.")
+
+with st.expander("ML Exploration: GC band, similar sequences, anomaly check", expanded=False):
+    st.caption("Three unsupervised views of a sequence, independent of the promoter/non-promoter "
+               "classifier above — none of them need a label to say something useful.")
+    explore_sequence = st.text_area("DNA sequence (A/C/G/T)", key="explore_sequence", height=110)
+
+    tab_band, tab_similar, tab_anomaly = st.tabs(["GC band", "Similar sequences", "Anomaly check"])
+
+    with tab_band:
+        st.caption("Groups sequences into Low/Medium/High GC bands with KMeans on GC% — the band "
+                   "boundaries are learned from the dataset's own distribution, not hardcoded.")
+        if st.button("Classify GC band", key="explore_band"):
+            try:
+                st.session_state.band_result = classify_gc_band(explore_sequence)
+            except DNAValidationError as exc:
+                st.session_state.pop("band_result", None)
+                st.error(str(exc))
+        if st.session_state.get("band_result"):
+            r = st.session_state.band_result
+            st.success(f"**{r['band']}** — {r['gc_percent']:.1f}% GC")
+            ranges_df = pd.DataFrame(
+                [{"Band": name, "GC% range": f"{lo:.1f}% – {hi:.1f}%"}
+                 for name, (lo, hi) in sorted(r["band_ranges"].items(), key=lambda kv: kv[1][0])]
+            )
+            st.dataframe(ranges_df, hide_index=True, width="stretch")
+
+    with tab_similar:
+        st.caption("Nearest neighbors in the training set by feature distance (base/dinucleotide "
+                   "frequencies, GC%, length) — composition similarity, not string edit distance.")
+        k = st.slider("How many neighbors", 1, 10, 5, key="explore_k")
+        if st.button("Find similar sequences", key="explore_similar"):
+            try:
+                st.session_state.similar_result = find_similar(explore_sequence, k=k)
+            except DNAValidationError as exc:
+                st.session_state.pop("similar_result", None)
+                st.error(str(exc))
+        if st.session_state.get("similar_result") is not None:
+            rows = st.session_state.similar_result
+            if rows:
+                df = pd.DataFrame([
+                    {"Sequence": (r["sequence"][:40] + "…") if len(r["sequence"]) > 40 else r["sequence"],
+                     "Label": r["label"], "Distance": r["distance"]}
+                    for r in rows
+                ])
+                st.dataframe(df.style.format({"Distance": "{:.2f}"}), hide_index=True, width="stretch")
+            else:
+                st.caption("No other sequences in the dataset to compare against.")
+
+    with tab_anomaly:
+        st.caption("Isolation Forest: does this sequence's composition look typical next to the "
+                   "training set, independent of whether it's a promoter?")
+        if st.button("Check for anomaly", key="explore_anomaly"):
+            try:
+                st.session_state.anomaly_result = check_anomaly(explore_sequence)
+            except DNAValidationError as exc:
+                st.session_state.pop("anomaly_result", None)
+                st.error(str(exc))
+        if st.session_state.get("anomaly_result"):
+            r = st.session_state.anomaly_result
+            if r["is_outlier"]:
+                st.warning(f"**Unusual** — anomaly score {r['anomaly_score']:.3f} (lower = more unusual)")
+            else:
+                st.success(f"**Typical** — anomaly score {r['anomaly_score']:.3f} (lower = more unusual)")
+            st.caption("The current dataset is all 57-base sequences, so length alone dominates this "
+                       "score for now — a different-length sequence reads as unusual regardless of "
+                       "composition until more varied-length sequences are added via `ml.add_data`.")
 
 if not GSC.exists():
     st.error(f"Compiler not found at `{GSC}`. Run `make` in the repo root first, then reload this page.")
