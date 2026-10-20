@@ -1,12 +1,16 @@
+import random
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 
 from ml.add_data import add_sequences, normalize_label
 from ml.anomaly import check_sequence as check_anomaly
 from ml.cluster import classify_gc_band, fit_bands, gc_percent
 from ml.compare import compare_models
-from ml.dataset import load_dataset
+from ml.dataset import LengthSkewWarning, dataset_skew_issues, load_dataset, warn_if_skewed
+from ml.import_data import (build_fasta_entries, build_regulondb_entries, read_fasta,
+                            reverse_complement, sample_negatives, window_at)
 from ml.features import DINUCLEOTIDES, extract_features
 from ml.models import DEFAULT_MODEL, available_models, build_model
 from ml.predict import load_model, predict_sequence
@@ -380,6 +384,142 @@ class AnomalyTests(unittest.TestCase):
     def test_contamination_accepts_custom_value(self):
         r = check_anomaly("TTGACAATTGACAATTGACAATTGACAA", dataset_path=self.dataset_path, contamination=0.3)
         self.assertEqual(set(r), {"is_outlier", "anomaly_score"})
+
+
+class LengthSkewTests(unittest.TestCase):
+    def test_uniform_length_balanced_data_is_clean(self):
+        seqs = ["ACGT" * 15] * 10 + ["TTGA" * 15] * 10
+        labels = ["Promoter"] * 10 + ["Non-Promoter"] * 10
+        self.assertEqual(dataset_skew_issues(seqs, labels), [])
+
+    def test_length_confounded_with_label_is_flagged(self):
+        seqs = ["ACGT" * 15] * 10 + ["ACGT" * 30] * 10
+        labels = ["Promoter"] * 10 + ["Non-Promoter"] * 10
+        issues = dataset_skew_issues(seqs, labels)
+        self.assertEqual(len(issues), 1)
+        self.assertIn("length skew", issues[0])
+
+    def test_overlapping_lengths_are_not_flagged(self):
+        rng = random.Random(1)
+        seqs = ["A" * rng.randint(40, 80) for _ in range(40)]
+        labels = ["Promoter"] * 20 + ["Non-Promoter"] * 20
+        self.assertEqual(dataset_skew_issues(seqs, labels), [])
+
+    def test_label_imbalance_is_flagged(self):
+        seqs = ["ACGT" * 15] * 20
+        labels = ["Promoter"] * 3 + ["Non-Promoter"] * 17
+        issues = dataset_skew_issues(seqs, labels)
+        self.assertTrue(any("imbalance" in i for i in issues))
+
+    def test_warn_if_skewed_emits_warning(self):
+        seqs = ["ACGT" * 15] * 10 + ["ACGT" * 30] * 10
+        labels = ["Promoter"] * 10 + ["Non-Promoter"] * 10
+        with self.assertWarns(LengthSkewWarning):
+            warn_if_skewed(seqs, labels)
+
+    def test_shipped_dataset_has_no_skew(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", LengthSkewWarning)
+            warn_if_skewed(*load_dataset())
+
+
+def _fake_genome(n=5000, seed=7):
+    rng = random.Random(seed)
+    return "".join(rng.choice("ACGT") for _ in range(n))
+
+
+class ImportDataTests(unittest.TestCase):
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.dir = Path(self._tmpdir.name)
+        self.genome = _fake_genome()
+        (self.dir / "genome.fa").write_text(">chr test\n" + "\n".join(
+            self.genome[i:i + 60] for i in range(0, len(self.genome), 60)) + "\n")
+        rows = ["# comment line", "Name\tTSS position\tStrand"]
+        self.tss = [(300, "+"), (900, "-"), (1500, "forward"), (2400, "reverse"), (3300, "+")]
+        for i, (pos, strand) in enumerate(self.tss):
+            rows.append(f"p{i}\t{pos}\t{strand}")
+        (self.dir / "promoters.tsv").write_text("\n".join(rows) + "\n")
+
+    def test_reverse_complement(self):
+        self.assertEqual(reverse_complement("AACGT"), "ACGTT")
+
+    def test_read_fasta_multi_record(self):
+        p = self.dir / "x.fa"
+        p.write_text(">a desc\nACGT\nAC\n>b\nGGG\n")
+        self.assertEqual(read_fasta(p), [("a desc", "ACGTAC"), ("b", "GGG")])
+
+    def test_read_fasta_rejects_non_fasta(self):
+        p = self.dir / "x.fa"
+        p.write_text("ACGT\n")
+        with self.assertRaises(ValueError):
+            read_fasta(p)
+
+    def test_window_at_plus_and_minus_strand(self):
+        g = self.genome
+        self.assertEqual(window_at(g, 300, "+", 50, 7), g[300 - 1 - 50:300 - 1 + 7])
+        self.assertEqual(window_at(g, 900, "-", 50, 7), reverse_complement(g[900 - 7:900 + 50]))
+        self.assertEqual(len(window_at(g, 900, "-", 50, 7)), 57)
+        self.assertIsNone(window_at(g, 10, "+", 50, 7))  # runs off the start
+
+    def test_regulondb_entries_are_balanced_and_length_matched(self):
+        entries, _ = build_regulondb_entries(self.dir / "promoters.tsv", self.dir / "genome.fa")
+        pos = [e for e in entries if e["label"] == "Promoter"]
+        neg = [e for e in entries if e["label"] == "Non-Promoter"]
+        self.assertEqual(len(pos), 5)
+        self.assertEqual(len(neg), 5)
+        self.assertEqual(sorted(len(e["sequence"]) for e in pos),
+                         sorted(len(e["sequence"]) for e in neg))
+        self.assertEqual(pos[0]["sequence"], self.genome[299 - 50:299 + 7])
+
+    def test_negatives_stay_away_from_tss(self):
+        tss = [p for p, _ in self.tss]
+        negs = sample_negatives(self.genome, [57] * 20, tss, exclude=200, seed=3)
+        self.assertEqual(len(negs), 20)
+        for start, _strand, seq in negs:
+            self.assertEqual(len(seq), 57)
+            for t in tss:
+                self.assertFalse(start - 200 <= t <= start + 56 + 200)
+
+    def test_negatives_are_reproducible(self):
+        a = sample_negatives(self.genome, [57] * 5, [300], seed=9)
+        b = sample_negatives(self.genome, [57] * 5, [300], seed=9)
+        self.assertEqual(a, b)
+
+    def test_sequence_column_used_when_present(self):
+        (self.dir / "seq.tsv").write_text("name\tsequence\nx\tACGTACGTACGTACGT\ny\tTTTTGGGGCCCCAAAA\n")
+        entries, _ = build_regulondb_entries(self.dir / "seq.tsv", self.dir / "genome.fa", neg_ratio=0)
+        self.assertEqual([e["sequence"] for e in entries], ["ACGTACGTACGTACGT", "TTTTGGGGCCCCAAAA"])
+
+    def test_neg_ratio_zero_needs_no_genome(self):
+        (self.dir / "seq.tsv").write_text("name\tsequence\nx\tACGTACGTACGTACGT\n")
+        entries, _ = build_regulondb_entries(self.dir / "seq.tsv", None, neg_ratio=0)
+        self.assertEqual(len(entries), 1)
+
+    def test_negatives_without_genome_is_an_error(self):
+        (self.dir / "seq.tsv").write_text("name\tsequence\nx\tACGTACGTACGTACGT\n")
+        with self.assertRaises(ValueError):
+            build_regulondb_entries(self.dir / "seq.tsv", None)
+
+    def test_table_without_usable_columns_is_an_error(self):
+        (self.dir / "bad.tsv").write_text("a\tb\n1\t2\n")
+        with self.assertRaises(ValueError):
+            build_regulondb_entries(self.dir / "bad.tsv", self.dir / "genome.fa")
+
+    def test_fasta_entries_and_dry_run(self):
+        p = self.dir / "extra.fa"
+        p.write_text(">s1 info\nACGTACGTACGTAC\n>s2\nTTTTTTTTTTTTTT\n")
+        entries = build_fasta_entries(p, "Non-Promoter")
+        self.assertEqual([e["name"] for e in entries], ["s1", "s2"])
+        dataset = self.dir / "d.data"
+        dataset.write_text("+,a,ACGTACGTACGTACGT\n-,b,TTGATTGATTGATTGA\n")
+        before = dataset.read_text()
+        report = add_sequences(entries, dataset_path=dataset, dry_run=True)
+        self.assertEqual(len(report["added"]), 2)
+        self.assertEqual(dataset.read_text(), before)
+        add_sequences(entries, dataset_path=dataset)
+        self.assertEqual(len(load_dataset(dataset)[0]), 4)
 
 
 class PredictionTests(unittest.TestCase):

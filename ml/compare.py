@@ -28,7 +28,7 @@ from pathlib import Path
 import joblib
 from sklearn.model_selection import train_test_split
 
-from .dataset import DEFAULT_DATASET, load_dataset
+from .dataset import DEFAULT_DATASET, load_dataset, warn_if_skewed
 from .evaluate import evaluate_model
 from .features import extract_feature_matrix
 from .models import DISPLAY_NAMES, available_models, build_model
@@ -45,6 +45,7 @@ def compare_models(dataset_path=DEFAULT_DATASET, model_names=None, random_state=
     """
     names = list(model_names) if model_names else available_models()
     sequences, labels = load_dataset(dataset_path)
+    warn_if_skewed(sequences, labels)
     X = extract_feature_matrix(sequences)
     X_train, X_test, y_train, y_test = train_test_split(
         X, labels, test_size=0.2, random_state=random_state, stratify=labels)

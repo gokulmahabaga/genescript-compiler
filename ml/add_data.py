@@ -33,7 +33,7 @@ import csv
 import json
 from pathlib import Path
 
-from .dataset import DEFAULT_DATASET, MIN_SEQUENCE_LENGTH, load_dataset
+from .dataset import DEFAULT_DATASET, MIN_SEQUENCE_LENGTH, load_dataset, warn_if_skewed
 from .validation import DNAValidationError, validate_sequence
 
 _LABEL_ALIASES = {
@@ -69,7 +69,7 @@ def _existing_sequences(dataset_path):
         return set()
 
 
-def add_sequences(entries, dataset_path=DEFAULT_DATASET, allow_duplicates=False):
+def add_sequences(entries, dataset_path=DEFAULT_DATASET, allow_duplicates=False, dry_run=False):
     """Validate `entries` and append the valid, non-duplicate ones to
     `dataset_path` in the shared `label,name,sequence` format.
 
@@ -80,7 +80,8 @@ def add_sequences(entries, dataset_path=DEFAULT_DATASET, allow_duplicates=False)
 
     Returns {"added": [...], "skipped": [...]} -- each entry in "skipped"
     carries a "reason" explaining why (invalid DNA, too short, duplicate,
-    bad label). Nothing is written if every entry is invalid.
+    bad label). Nothing is written if every entry is invalid, or if
+    `dry_run` is true (everything is still validated and reported).
     """
     dataset_path = Path(dataset_path)
     existing = _existing_sequences(dataset_path)
@@ -109,7 +110,7 @@ def add_sequences(entries, dataset_path=DEFAULT_DATASET, allow_duplicates=False)
             "length": len(seq),
         })
 
-    if new_rows:
+    if new_rows and not dry_run:
         dataset_path.parent.mkdir(parents=True, exist_ok=True)
         prior_text = dataset_path.read_text(encoding="utf-8") if dataset_path.exists() else ""
         needs_leading_newline = bool(prior_text) and not prior_text.endswith("\n")
@@ -184,6 +185,8 @@ def main():
 
     report = add_sequences(entries, dataset_path=args.dataset, allow_duplicates=args.allow_duplicates)
     _print_report(report)
+    if report["added"]:
+        warn_if_skewed(*load_dataset(args.dataset))
 
     if args.retrain:
         if not report["added"]:

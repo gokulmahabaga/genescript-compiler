@@ -66,6 +66,52 @@ report = add_sequences([
 print(report["added"], report["skipped"])
 ```
 
+### Importing external data (kept out of the repo)
+
+`ml/import_data.py` turns data you download yourself into dataset rows, so
+third-party data never has to be committed. The repo ships only the UCI
+dataset.
+
+```bash
+# RegulonDB-style promoter TSV + random E. coli genome windows as negatives
+python -m ml.import_data regulondb --tsv PromoterSet.tsv --genome U00096.3.fasta --dry-run
+python -m ml.import_data regulondb --tsv PromoterSet.tsv --genome U00096.3.fasta --retrain
+
+# any FASTA, one label for every record
+python -m ml.import_data fasta --fasta extra.fasta --label Non-Promoter
+```
+
+- Positives come from a sequence column if the TSV has one, otherwise they
+  are cut from the genome around each TSS (`--upstream 50 --downstream 7`
+  gives 57 bp, the UCI width). Columns are auto-detected from the header or
+  set with `--seq-col/--tss-col/--strand-col` (1-based index or header text).
+- Negatives are random genome windows (either strand) with the **same
+  lengths as the positives** and at least `--exclude 200` bp from every
+  known TSS, so length can't reveal the label. `--seed` makes them
+  reproducible; `--neg-ratio` sets negatives per positive.
+- `--dry-run` validates and reports without writing. Use
+  `--dataset scratch.data --model scratch.joblib` to experiment on a copy.
+
+**Licensing.** RegulonDB is free for academic/non-commercial use but does
+not allow redistributing it inside other databanks without written consent,
+and the genome is an NCBI record. Download them yourself, cite RegulonDB
+(Salgado et al., v12.0) in anything you present, and **don't commit** the
+downloaded files or a `promoters.data` grown from them -- keep a scratch
+copy (`--dataset`) instead.
+
+**Comparing numbers.** Metrics on a grown dataset aren't comparable with the
+106-row UCI figures: different data, different negatives, bigger test set.
+Report them as a new experiment, not an improvement of the old number.
+
+### Skew warnings
+
+`ml.train`, `ml.compare` and `ml.add_data` warn (`LengthSkewWarning`) when
+the data is skewed in a way that inflates metrics: the smaller class is
+under 25% of the rows, or sequence length alone separates the classes
+(AUC >= 0.85) -- `length` is a model feature, so mismatched lengths let a
+model "predict" the label without looking at composition. The shipped UCI
+data is clean (all 57 bp, 53/53).
+
 ## Features and model
 
 `ml/features.py` creates 22 features in one shared implementation: A/C/G/T

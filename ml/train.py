@@ -7,7 +7,7 @@ from pathlib import Path
 import joblib
 from sklearn.model_selection import train_test_split
 
-from .dataset import DEFAULT_DATASET, load_dataset
+from .dataset import DEFAULT_DATASET, load_dataset, warn_if_skewed
 from .evaluate import evaluate_model
 from .features import extract_feature_matrix
 from .models import DEFAULT_MODEL, available_models, build_model
@@ -17,6 +17,7 @@ MODEL_PATH = Path(__file__).resolve().parent / "models" / "promoter_classifier.j
 
 def train(dataset_path=DEFAULT_DATASET, model_path=MODEL_PATH, model_name=DEFAULT_MODEL):
     sequences, labels = load_dataset(dataset_path)
+    warn_if_skewed(sequences, labels)
     X = extract_feature_matrix(sequences)
     X_train, X_test, y_train, y_test = train_test_split(
         X, labels, test_size=0.2, random_state=42, stratify=labels)
