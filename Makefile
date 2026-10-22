@@ -8,9 +8,9 @@ SYSLIBS := $(shell $(LLVM_CONFIG) --system-libs)
 
 SRC := src
 
-.PHONY: all clean test
+.PHONY: all clean test test-batch
 
-all: gsc runtime.o
+all: gsc runtime.o genescript-batch
 
 # ---- Flex / Bison generated files (Lab Experiments 1, 6, 7) ----
 $(SRC)/parser.tab.c $(SRC)/parser.tab.h: $(SRC)/parser.y
@@ -32,6 +32,10 @@ lex.yy.o: $(SRC)/lex.yy.c $(SRC)/parser.tab.h $(SRC)/ast.h
 runtime.o: $(SRC)/runtime.c
 	$(CC) -c $(SRC)/runtime.c -o runtime.o -O2 -std=c11 -D_GNU_SOURCE
 
+# Standalone JSON batch runner; does not alter the gsc compiler target.
+genescript-batch: $(SRC)/batch_main.c runtime.o
+	$(CC) $(SRC)/batch_main.c runtime.o -o genescript-batch -std=c11 -O2 -pthread
+
 rdparser.o: $(SRC)/rdparser.c $(SRC)/ast.h $(SRC)/parser.tab.h
 	$(CC) -c $(SRC)/rdparser.c -o rdparser.o -I$(SRC) -std=c11 -D_GNU_SOURCE
 
@@ -52,7 +56,7 @@ gsc: ast.o parser.tab.o lex.yy.o rdparser.o optimizer.o dump.o codegen.o main.o
 	$(CC) $^ -o gsc $(LDFLAGS) $(LIBS) $(SYSLIBS)
 
 clean:
-	rm -f *.o gsc $(SRC)/parser.tab.c $(SRC)/parser.tab.h $(SRC)/lex.yy.c
+	rm -f *.o gsc genescript-batch $(SRC)/parser.tab.c $(SRC)/parser.tab.h $(SRC)/lex.yy.c
 	rm -f examples/*.ll examples/*.bc examples/*.s examples/*.o examples/*.exe
 	rm -f *.ll *.bc *.s *.exe
 
@@ -61,3 +65,6 @@ clean:
 # are rejected. See tests/run_tests.sh.
 test: all
 	@tests/run_tests.sh
+
+test-batch: genescript-batch
+	python3 tests/test_batch.py
