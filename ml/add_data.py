@@ -166,6 +166,8 @@ def main():
     parser.add_argument("--dataset", default=str(DEFAULT_DATASET), help="dataset file to append to")
     parser.add_argument("--allow-duplicates", action="store_true",
                          help="add a sequence even if it's already in the dataset")
+    parser.add_argument("--dry-run", action="store_true",
+                         help="validate and report what would be added; write nothing")
     parser.add_argument("--retrain", action="store_true",
                          help="retrain the model on the updated dataset and print the new metrics")
     parser.add_argument("--model",
@@ -183,8 +185,12 @@ def main():
         {"label": args.label, "sequence": args.sequence, "name": args.name}
     ]
 
-    report = add_sequences(entries, dataset_path=args.dataset, allow_duplicates=args.allow_duplicates)
+    report = add_sequences(entries, dataset_path=args.dataset, allow_duplicates=args.allow_duplicates,
+                           dry_run=args.dry_run)
     _print_report(report)
+    if args.dry_run:
+        print("Dry run -- the dataset was not modified.")
+        return
     if report["added"]:
         warn_if_skewed(*load_dataset(args.dataset))
 
