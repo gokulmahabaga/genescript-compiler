@@ -55,6 +55,7 @@ void gs_print_length_value(long len, int binary) {
 char *gs_calc_complement(const char *seq) {
     size_t len = strlen(seq);
     char *out = (char *)malloc(len + 1);
+    if (!out) return NULL;
     for (size_t i = 0; i < len; i++) {
         switch (toupper((unsigned char)seq[i])) {
             case 'A': out[i] = 'T'; break;
@@ -71,6 +72,7 @@ char *gs_calc_complement(const char *seq) {
 char *gs_calc_reverse(const char *seq) {
     size_t len = strlen(seq);
     char *out = (char *)malloc(len + 1);
+    if (!out) return NULL;
     for (size_t i = 0; i < len; i++) out[i] = seq[len - 1 - i];
     out[len] = '\0';
     return out;
@@ -78,6 +80,7 @@ char *gs_calc_reverse(const char *seq) {
 
 char *gs_calc_reverse_complement(const char *seq) {
     char *c = gs_calc_complement(seq);
+    if (!c) return NULL;
     char *rc = gs_calc_reverse(c);
     free(c);
     return rc;
@@ -139,6 +142,7 @@ static char codon_to_aa(const char *codon) {
 char *gs_calc_translate(const char *seq) {
     size_t len = strlen(seq);
     char *protein = (char *)malloc(len / 3 + 1);
+    if (!protein) return NULL;
     size_t pi = 0;
     for (size_t i = 0; i + 3 <= len; i += 3) {
         char codon[4] = { (char)toupper((unsigned char)seq[i]),

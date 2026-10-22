@@ -15,6 +15,8 @@ Run from the repo root:
 """
 from __future__ import annotations
 
+import json
+import math
 import re
 import subprocess
 import sys
@@ -44,6 +46,14 @@ from ml.validation import DNAValidationError, validate_sequence
 import dna_viz as viz
 
 GSC = REPO / "gsc"
+BATCH = REPO / "genescript-batch"
+MAX_BATCH_SEQUENCES = 100
+MAX_BATCH_REQUEST_BYTES = 1024 * 1024
+MAX_BATCH_SEQUENCE_BASES = 100_000
+BATCH_OPERATIONS = [
+    "LENGTH", "GC_CONTENT", "REVERSE", "COMPLEMENT",
+    "REVERSE_COMPLEMENT", "TRANSLATE",
+]
 
 PHASES = ["Lexer", "Parser", "Semantic analysis", "Optimizer", "LLVM codegen", "Run"]
 
@@ -148,6 +158,71 @@ def compile_program(source: str, frontend: str, optimize: bool) -> Result:
             res.error = clean_stderr(run.stderr) or f"Program exited with code {run.returncode}."
             res.failed_phase = "Run" if res.llvm_ir else phase_of_error(res.error)
     return res
+
+
+def run_batch_analysis(sequences: list[str], operations: list[str]) -> dict:
+    """Submit a bounded JSON request to the C runtime batch executable."""
+    request = {"operations": operations, "sequences": sequences}
+    payload = json.dumps(request, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    if len(payload) > MAX_BATCH_REQUEST_BYTES:
+        return {"error": "Batch request exceeds 1 MiB. Reduce the number or length of sequences."}
+
+    executable = next(
+        (path for path in (BATCH, BATCH.with_suffix(".exe")) if path.is_file()), None
+    )
+    if executable is None:
+        return {"error": "Batch executable not found. Build it with `make genescript-batch`, then retry."}
+
+    try:
+        run = subprocess.run(
+            [str(executable)], input=payload, cwd=REPO,
+            capture_output=True, timeout=60, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"error": "Batch analysis timed out after 60 seconds. Try fewer or shorter sequences."}
+    except FileNotFoundError:
+        return {"error": "Batch executable could not be started. Rebuild it with `make genescript-batch`."}
+    except OSError as exc:
+        return {"error": f"Could not start batch analysis: {exc.strerror or 'operating-system error'}."}
+
+    try:
+        response = json.loads(run.stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        if run.returncode != 0:
+            return {"error": f"Batch executable exited with status {run.returncode} and returned invalid JSON."}
+        return {"error": "Batch executable returned malformed JSON. Rebuild it and retry."}
+
+    if run.returncode != 0:
+        if isinstance(response, dict) and isinstance(response.get("error"), str):
+            return {"error": f"Batch request rejected: {response['error']}"}
+        diagnostic = run.stderr.decode("utf-8", errors="replace").strip()
+        detail = diagnostic[:1000] if diagnostic else "No diagnostic was provided."
+        return {"error": f"Batch executable failed with status {run.returncode}. {detail}"}
+
+    results = response.get("results") if isinstance(response, dict) else None
+    if not isinstance(results, list) or len(results) != len(sequences):
+        return {"error": "Batch executable returned an unexpected result structure. Rebuild it and retry."}
+    for expected, row in zip(sequences, results):
+        if not isinstance(row, dict) or row.get("sequence") != expected:
+            return {"error": "Batch executable returned results that do not match the input order."}
+        if "error" in row:
+            if not isinstance(row["error"], str):
+                return {"error": "Batch executable returned a malformed sequence error."}
+            continue
+        for operation in operations:
+            value = row.get(operation)
+            if operation == "LENGTH":
+                valid_value = isinstance(value, int) and not isinstance(value, bool)
+            elif operation == "GC_CONTENT":
+                valid_value = (
+                    isinstance(value, (int, float)) and not isinstance(value, bool)
+                    and math.isfinite(value)
+                )
+            else:
+                valid_value = isinstance(value, str)
+            if not valid_value:
+                return {"error": "Batch executable returned a malformed or incomplete result. Rebuild it and retry."}
+    return {"results": results}
 
 
 # --------------------------------------------------------------------------
@@ -445,7 +520,79 @@ with st.expander("ML Exploration: GC band, similar sequences, anomaly check", ex
                        "composition until more varied-length sequences are added via `ml.add_data`.")
 
 if not GSC.exists():
-    st.error(f"Compiler not found at `{GSC}`. Run `make` in the repo root first, then reload this page.")
+    st.error(f"Compiler not found at `{GSC}`. The single-program compiler needs `make` in the repo root.")
+
+st.header("Batch DNA Analysis")
+st.caption(
+    "Analyze independent sequences with the C runtime. Enter one sequence per line; "
+    "blank lines are ignored. Maximum 100 sequences, 100,000 bases per sequence, "
+    "and a 1 MiB encoded request. Oversized sequences receive an individual error."
+)
+batch_sequences_text = st.text_area(
+    "DNA sequences (one per line)",
+    placeholder="ATGCGATCGATCG\nTTGACAATTGACAA",
+    height=130,
+    key="batch_sequences_text",
+)
+batch_operations = st.multiselect(
+    "Analyses",
+    BATCH_OPERATIONS,
+    default=["LENGTH", "GC_CONTENT"],
+    key="batch_operations",
+)
+
+if st.button("Run batch analysis", type="primary", key="run_batch_analysis"):
+    st.session_state.batch_result = None
+    sequences = [line.strip() for line in batch_sequences_text.splitlines() if line.strip()]
+    if not sequences:
+        st.session_state.batch_error = "Enter at least one DNA sequence."
+    elif len(sequences) > MAX_BATCH_SEQUENCES:
+        st.session_state.batch_error = (
+            f"This batch has {len(sequences)} sequences; the limit is "
+            f"{MAX_BATCH_SEQUENCES}. Split it into smaller batches."
+        )
+    elif not batch_operations:
+        st.session_state.batch_error = "Select at least one analysis."
+    else:
+        st.session_state.pop("batch_error", None)
+        with st.spinner("Analyzing sequences…"):
+            result = run_batch_analysis(sequences, batch_operations)
+        if "error" in result:
+            st.session_state.batch_error = result["error"]
+        else:
+            st.session_state.pop("batch_error", None)
+            st.session_state.batch_result = {
+                "sequences": sequences,
+                "operations": list(batch_operations),
+                "results": result["results"],
+            }
+
+if st.session_state.get("batch_error"):
+    st.error(st.session_state.batch_error)
+
+batch_result = st.session_state.get("batch_result")
+if batch_result:
+    st.subheader("Batch results")
+    for index, (sequence, row) in enumerate(
+        zip(batch_result["sequences"], batch_result["results"]), start=1
+    ):
+        preview = sequence[:32] + ("…" if len(sequence) > 32 else "")
+        with st.expander(f"Sequence {index} · {len(sequence):,} bases · {preview}"):
+            st.code(sequence, language=None)
+            if "error" in row:
+                st.error(f"Analysis skipped for this sequence: {row['error']}")
+                continue
+            for operation in batch_result["operations"]:
+                value = row[operation]
+                label = operation.replace("_", " ").title()
+                if operation in ("LENGTH", "GC_CONTENT"):
+                    display = f"{value:,}" if operation == "LENGTH" else f"{value:.2f}%"
+                    st.metric(label, display)
+                else:
+                    st.markdown(f"**{label}**")
+                    st.code(value, language=None)
+
+if not GSC.exists():
     st.stop()
 
 examples = sorted(list((REPO / "examples").glob("*.gs")) + list((REPO / "tests" / "cases").glob("*.gs")))
