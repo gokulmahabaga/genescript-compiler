@@ -1,208 +1,201 @@
-# GeneScript Compiler — LLVM / Flex / Bison edition
+# GeneScript Compiler
 
-Built specifically for **BCSE307P (Compiler Design Lab)**, whose indicative
-experiments require an LLVM-, Flex-, and Bison-based toolchain rather than a
-hand-rolled interpreter. (There's also a pure-Python version of this same
-GeneScript DSL — same language, same group project — built for the
-lecture-style J-component; this folder is the separate lab deliverable.)
+A DNA-focused programming language and compiler that translates GeneScript programs into executable code using LLVM, with DNA-specific optimization techniques and a multithreaded batch-processing subsystem.
 
-## What this is
+## Overview
 
-A real compiler for GeneScript (a DSL for DNA sequence analysis: GC content,
-motif search, reverse-complement, translation, mutation comparison), written
-entirely in **C** (no C++ anywhere in the authored source — LLVM is driven
-through its C API, `llvm-c/Core.h`, not the C++ `IRBuilder`). It has:
+GeneScript is a compiler project designed to explore programming language implementation, compiler optimization, and DNA sequence processing. It combines a custom language front end with LLVM-based code generation and a runtime for DNA-related operations.
 
-- **An optimizer** that runs on the AST between parsing and codegen:
-  common-subexpression elimination by local value numbering (the DAG
-  of a basic block) plus DNA-specific algebraic rewrites like
-  `REVERSE(COMPLEMENT(x))` → `REVERSE_COMPLEMENT(x)`. See below.
-- **Phase-by-phase dumps** (`--dump-tokens`, `--dump-ast`, `--dump-tac`,
-  `--dump-symtab`, `--show-opt`) showing the output of every stage.
-- **Two independent front ends** that parse the same grammar into the same
-  AST: a Flex+Bison (LALR) front end, and a hand-written recursive-descent
-  front end.
-- **Real LLVM IR codegen** using LLVM's C API (`llvm-c/Core.h`), not the C++ IRBuilder.
-- **Real machine code output**: LLVM bitcode → assembly (`.s`) → object
-  code (`.o`) → a linked, runnable native executable — via LLVM's own `llc`
-  backend and `clang` as the linker, not a toy VM.
+The project includes a main compiler pipeline and a separate batch-processing executable. The batch executable uses POSIX threads to process multiple DNA sequences concurrently.
 
-## Build & run
+## Key Features
 
-Requires `flex`, `bison`, `clang`, and LLVM 18 **including its
-development headers** (`llvm-config-18`, `llc`, `llvm-c/*.h`). On
-Ubuntu / WSL:
+- **Custom language front end:** Supports parsing GeneScript source code using the project's parser implementations.
+- **DNA-specific operations:** Supports operations such as sequence length, GC content, reverse, complement, reverse complement, and translation in the batch-processing subsystem.
+- **Compiler optimization:** Includes DNA-oriented algebraic rewrites and local value numbering/common subexpression elimination (CSE).
+- **LLVM code generation:** Uses LLVM infrastructure to generate machine code through the compiler toolchain.
+- **Parallel batch processing:** Uses POSIX threads (`pthreads`) to distribute sequence-processing tasks among worker threads.
+- **Testing:** Includes batch-processing tests to help validate the executable's behavior.
+
+## Architecture
+
+The project can be understood as two related workflows.
+
+### 1. Main compiler pipeline
+
+1. **Source input:** Read a GeneScript program.
+2. **Parsing:** Convert source code into a structured representation.
+3. **Optimization:** Apply supported compiler optimization passes.
+4. **Code generation:** Generate LLVM-based intermediate representation or code through the project's code-generation components.
+5. **Machine-code generation:** Use the configured LLVM and compiler tools to produce an executable.
+
+The main compiler pipeline currently performs its parsing, optimization, and code-generation stages sequentially.
+
+### 2. DNA batch-processing pipeline
+
+1. Read a batch of DNA sequences and requested operations.
+2. Create a shared work queue.
+3. Distribute sequence-processing tasks among worker threads.
+4. Execute the requested operations using the runtime.
+5. Emit results in the original sequence order.
+
+The batch runner uses a mutex to coordinate access to the shared work queue.
+
+## Parallelism
+
+GeneScript currently implements **data-level parallelism in its DNA batch-processing subsystem**.
+
+The batch runner in `src/batch_main.c` uses POSIX threads:
+
+- It defines a maximum of four participating worker threads, including the main thread.
+- Worker threads claim sequence-processing tasks from a shared queue.
+- A mutex protects access to the shared task index.
+- Results are stored by sequence index so they can be emitted in input order.
+- If mutex initialization fails, the implementation falls back to serial processing.
+
+**Important distinction:** This is parallel execution of DNA sequence-processing tasks, not parallel compilation of multiple GeneScript source programs. The main compiler pipeline does not currently implement parallel parsing, optimization, or code generation.
+
+## DNA Operations
+
+The batch-processing subsystem supports the following operation names:
+
+| Operation | Description |
+|---|---|
+| `LENGTH` | Calculate the length of a DNA sequence. |
+| `GC_CONTENT` | Calculate the proportion of G and C bases. |
+| `REVERSE` | Reverse the sequence. |
+| `COMPLEMENT` | Generate the complementary DNA sequence. |
+| `REVERSE_COMPLEMENT` | Generate the reverse complement. |
+| `TRANSLATE` | Translate a DNA sequence into its corresponding protein representation, as implemented by the runtime. |
+
+The operations available to a complete GeneScript program depend on the language and runtime implementation.
+
+## Compiler Optimizations
+
+The project includes optimization techniques intended to reduce unnecessary computation:
+
+- **DNA-specific algebraic rewrites:** Apply supported simplifications involving DNA-related expressions.
+- **Local value numbering:** Identify equivalent computations within the relevant scope.
+- **Common subexpression elimination:** Reuse the results of equivalent expressions where the optimizer can establish that this is valid.
+
+Optimization behavior and effectiveness depend on the program and the supported optimization rules.
+
+## Project Structure
+
+```text
+genescript-compiler/
+├── src/
+│   ├── main.c              # Main compiler entry point
+│   ├── batch_main.c        # Multithreaded DNA batch runner
+│   └── codegen.c           # Code-generation implementation
+├── tests/
+│   └── test_batch.py       # Batch-processing tests
+├── Makefile                # Build and test targets
+├── README.md               # Project documentation
+└── ...
+```
+
+Other source files, parser components, runtime files, and optimization modules may be present in the repository.
+
+## Requirements
+
+Install the dependencies required by your environment and project configuration:
+
+- GCC or another compatible C compiler
+- GNU Make
+- POSIX threads support (`pthread`)
+- LLVM and the configured LLVM toolchain
+- Clang
+- Flex and Bison, if building the corresponding parser components
+- Python 3 for the batch test script
+
+Exact LLVM versions and additional dependencies should match the project's build configuration.
+
+## Build Instructions
+
+Clone the repository if you do not already have it:
 
 ```bash
-sudo apt install -y build-essential flex bison clang llvm-18 llvm-18-dev
+git clone https://github.com/gokulmahabaga/genescript-compiler.git
+cd genescript-compiler
 ```
 
-(Without `llvm-18-dev` the build fails with `'llvm-c/Types.h' file not found`.)
+Build the project using Make:
 
 ```bash
-make              # builds ./gsc (the compiler driver) and runtime.o
-./gsc examples/basic.gs                      # Bison front end (default)
-./gsc examples/basic.gs --frontend=rd        # recursive-descent front end
-./gsc examples/basic.gs --emit-llvm          # also print IR to stdout
-./gsc examples/basic.gs --no-run             # compile/link but don't execute
-./gsc examples/basic.gs --no-opt             # skip the optimizer (also -O0)
-make test         # checks both front ends against saved expected output,
-                  # and checks that every tests/errors/*.gs is rejected
-make clean
+make
 ```
 
-`gsc` finds `runtime.o` next to its own executable, so it can be run
-from any directory. It exits non-zero on any lexical, parse, or
-semantic error. Each run of `gsc` leaves behind `<name>.ll` (IR text), `<name>.bc`
-(bitcode), `<name>.s` (assembly), `<name>.o` (object code), and
-`<name>.exe` (linked binary) in the current directory — inspect any of
-them to see the real intermediate artifacts.
-
-## Web UI (Streamlit)
-
-A browser UI that shows every phase of a compile side by side: token
-table, AST, symbol table, TAC before/after optimization with the list of
-rewrites, LLVM IR, assembly, and the program's output. If compilation
-fails, the pipeline bar marks the phase that failed (lexer, parser, or
-semantic analysis) and shows the error.
+To build the batch-processing executable separately:
 
 ```bash
-make                                   # the UI runs the real ./gsc
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r ui/requirements.txt
-streamlit run ui/app.py                # then open http://localhost:8501
+make genescript-batch
 ```
 
-`ui/app.py` only runs `gsc` with its `--dump-*` flags and lays out the
-result -- it doesn't reimplement any part of the compiler.
+The batch executable is expected to be generated as `genescript-batch` in the project root when the target succeeds.
 
-**DNA Visualizer tab** (`ui/dna_viz.py`) -- charts of the program's
-sequences and results. Load `examples/visualize.gs` to see all of them:
+## Run the Batch Processor
 
-- stat tiles: length, GC%, AT%, motif hits
-- **base composition**: A/T/G/C counts
-- **sequence map**: every base as a colored cell; pick a motif found by
-  `FIND_MOTIF` and its hits light up
-- **GC content along the sequence**: sliding window (adjustable size) to
-  spot GC-rich and AT-rich regions
-- **codons and protein**: what `TRANSLATE` reads, codon by codon
-- **GC content by sequence** when the program declares several
-- **mutation view** for every `COMPARE`: reference and sample base by
-  base, mutated positions marked
+The batch runner accepts JSON input containing an `operations` array and a `sequences` array.
 
-Sequences come from the symbol table, motif hits and mutations from the
-compiled program's own output (matched to the `FIND_MOTIF` / `COMPARE`
-instructions in the TAC). Base colors were checked for color-blind
-safety, and every chart also prints the base letters, so color is never
-the only cue. The UI uses the light theme (`.streamlit/config.toml`).
-
-## Seeing every phase
+For example:
 
 ```bash
-./gsc tests/cases/optimizer_demo.gs --dump-tokens --dump-ast \
-      --dump-tac --show-opt --dump-symtab
+printf '%s\n' '{"operations":["LENGTH","GC_CONTENT","REVERSE_COMPLEMENT"],"sequences":["ATGCGT","ACGT","TTT","GGCATC"]}' | ./genescript-batch
 ```
 
-| Flag | Phase | Prints |
-|---|---|---|
-| `--dump-tokens` | Lexical analysis | every token: line, token type, lexeme |
-| `--dump-ast` | Parsing | the syntax tree, drawn as a tree |
-| `--dump-tac` | Intermediate code | three-address code ("Bio-IR"), before **and** after optimization |
-| `--show-opt` | Optimization | each rewrite applied, with its line number |
-| `--dump-symtab` | Semantic analysis | name, type, length, GC%, line, and source of every binding |
-| `--emit-llvm` | Code generation | the LLVM IR |
+This example requests three operations for each of four DNA sequences.
 
-All of these go to stdout, before the program's own output. With
-`--no-run` you get only the dumps -- this is what a UI should call.
+The exact output format depends on the implementation in `src/batch_main.c`.
 
-## The optimizer (`src/optimizer.c`)
+## Run Tests
 
-Runs on the AST, after parsing and before LLVM codegen. Disable it with
-`--no-opt` / `-O0`.
+Build the batch executable and run its test target:
 
-**Pass 1 -- domain-specific algebraic simplification.** DNA identities
-that let the compiler do less work:
-
-| Before | After | Why it's valid |
-|---|---|---|
-| `REVERSE(COMPLEMENT(x))`, `COMPLEMENT(REVERSE(x))` | `REVERSE_COMPLEMENT(x)` | one specialised runtime call instead of two passes + an intermediate copy |
-| `LENGTH(REVERSE(x))` (or `COMPLEMENT`, `REVERSE_COMPLEMENT`) | `LENGTH(x)` | these transforms never change the length |
-| `GC_CONTENT(REVERSE(x))` (same three) | `GC_CONTENT(x)` | complement swaps G↔C, so the G+C count is unchanged |
-| `REVERSE(REVERSE(x))`, `COMPLEMENT(COMPLEMENT(x))`, `REVERSE_COMPLEMENT(REVERSE_COMPLEMENT(x))` | `x` | each is its own inverse (applied only when the value feeds another call, so printed labels don't change) |
-
-**Pass 2 -- common-subexpression elimination (local value numbering).**
-A GeneScript program is one basic block, so this is the classic DAG
-construction for a block: every expression gets a *value number* built
-from its operator and its operands' value numbers. If the same value is
-computed more than once:
-
-- and a variable already holds it, later uses read that variable
-  (`x = GC_CONTENT(dna); y = GC_CONTENT(dna);` → `y = x;`);
-- otherwise the compiler inserts a temporary (`$cse1`, `$cse2`, …),
-  computes it once there, and every occurrence reads the temporary.
-
-Reassigning a variable gives it a new value number, so a value is never
-reused after the variable holding it changes
-(`tests/cases/optimizer_safety.gs` checks this). Aliases (`a = dna;`)
-share a value number, so `LENGTH(a)` and `LENGTH(dna)` are recognised
-as the same computation.
-
-The optimizer never changes a program's results. The one visible
-difference: `PRINT REVERSE(COMPLEMENT(dna));` is labelled
-"Reverse Complement:" instead of "Reverse:", because that is what it
-now computes.
-
-## Scope note (read before extending)
-
-Variables are supported: `x = GC_CONTENT(dna);` allocates a real stack slot
-(`alloca`) in the generated LLVM IR, stores the computed value into it, and
-later reads (`PRINT x;`, or using `x` as another function's argument) `load`
-it back out — the same alloca/load/store pattern clang itself emits for a
-local variable at `-O0`. A variable's type (int, double, or sequence
-pointer) is tracked at compile time from how it was produced, so:
-
-```
-SEQUENCE dna = "ATGCGATCGATCG";
-rc = REVERSE_COMPLEMENT(dna);   -- rc is a sequence, stored via alloca
-FIND_MOTIF(rc, "CGA");          -- variables can feed into other functions
-alias = dna;                    -- x = y aliases an existing binding
-PRINT alias;
-PRINT LENGTH(REVERSE(COMPLEMENT(dna)));   -- calls can be nested
+```bash
+make test-batch
 ```
 
-**Deliberately not supported**: assigning `FIND_MOTIF`'s result to a
-variable (`m = FIND_MOTIF(...)`) — it's a composite result (a motif string
-plus a variable-length list of positions), and this backend doesn't have a
-struct/array runtime type to hold it in. It's still fully usable as its own
-statement (`FIND_MOTIF(dna, "ATG");`). `COMPARE` is similarly statement-only,
-matching the grammar (it was never an `expr` to begin with). Both give a
-clear semantic error if you try. If you need `FIND_MOTIF` results
-composable, that's a reasonable next step — it'd need a small runtime
-struct (`{char* motif; long* positions; long count;}`) returned by pointer.
+You can also run the Python test script directly after building:
 
-## File-by-file
+```bash
+python3 tests/test_batch.py
+```
 
-```
-src/ast.h, ast.c        AST node definitions + constructors (LLVM-style RTTI)
-src/lexer.l             Flex scanner
-src/parser.y            Bison LALR(1) grammar
-src/rdparser.c        Hand-written recursive-descent parser (2nd front end)
-src/optimizer.h/.c     AST optimizer: domain rewrites + CSE (value numbering)
-src/dump.h/.c          --dump-tokens / --dump-ast / --dump-tac / --dump-symtab
-src/codegen.h/.c       AST -> LLVM IR
-src/runtime.c           C runtime: GC content, motif search, translate,
-                         reverse-complement, mutation comparison, printing
-src/main.c            Driver: parse -> optimize -> codegen -> IR/bitcode -> llc -> clang
-GRAMMAR.md              Formal CFG + lexical grammar + semantic rules
-Makefile                Builds gsc + runtime.o; `make test` runs the test suite
-examples/*.gs           Sample programs (+ .expected output for each)
-ui/app.py               Streamlit web UI (runs gsc, shows every phase)
-ui/dna_viz.py           DNA Visualizer charts (Altair)
-ui/requirements.txt     Python packages for the UI
-tests/run_tests.sh      Test runner: both front ends vs. expected output
-tests/cases/*.gs        Extra programs that must compile and run correctly
-                        (<name>.flags adds gsc options, e.g. --dump-tac)
-ui/app.py               Streamlit web UI (runs gsc, shows every phase)
-ui/requirements.txt     Python packages for the UI
-tests/errors/*.gs       Programs that must be rejected with an error
-```
+A passing test suite helps verify functional correctness. To evaluate parallel speedup, benchmark the threaded implementation against a serial implementation using the same workloads and repeated measurements.
+
+## Current Limitations
+
+- The main compiler pipeline is sequential rather than a parallel compiler.
+- Parallel processing is implemented in the DNA batch runner, not across compiler stages.
+- The available DNA operations and language features are limited to those implemented in the source code and runtime.
+- Performance improvements from multithreading depend on the workload, available CPU cores, and thread-management overhead.
+- Performance claims should be supported by reproducible benchmarks.
+
+## Future Improvements
+
+- Investigate parallel compilation of independent source files or compilation units.
+- Explore parallel optimization for independent functions or intermediate-representation units.
+- Add reproducible serial-versus-parallel performance benchmarks.
+- Expand compiler diagnostics and error reporting.
+- Add more language examples and regression tests.
+- Document supported language syntax and optimization rules in greater detail.
+
+## Learning Outcomes
+
+This project provides practical experience with:
+
+- Compiler architecture and language parsing
+- Intermediate representations and LLVM-based code generation
+- Compiler optimization techniques
+- DNA sequence processing
+- POSIX threads and synchronization
+- Build automation and test-driven development
+
+## Repository
+
+GitHub: https://github.com/gokulmahabaga/genescript-compiler
+
+## License
+
+Refer to the repository's `LICENSE` file for the applicable license terms.
